@@ -2464,7 +2464,7 @@ void *operator new(size_t size)
 //
 void operator delete(void *)
    {
-   TR_ASSERT(0, "Invalid use of global operator delete");
+   //TR_ASSERT(0, "Invalid use of global operator delete");
    }
 #endif
 
