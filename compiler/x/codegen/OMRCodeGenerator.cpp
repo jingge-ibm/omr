@@ -365,8 +365,8 @@ OMR::X86::CodeGenerator::initialize(TR::Compilation *comp)
    self()->setSupportsArrayCmp();
    self()->setSupportsArrayCopy();
 
-   if (comp->getOption(TR_EnableX86AdvancedMemorySet))
-      self()->setSupportsArraySet();
+   //if (comp->getOption(TR_EnableX86AdvancedMemorySet))
+   self()->setSupportsArraySet();
 
    static char *disableArraySet = feGetEnv("TR_disableArraySet");
    if (!disableArraySet)

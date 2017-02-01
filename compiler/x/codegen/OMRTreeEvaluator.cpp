@@ -3403,146 +3403,443 @@ TR::Register *OMR::X86::TreeEvaluator::encodeUTF16Evaluator(TR::Node *node, TR::
    }
 #endif
 
-TR::Register *OMR::X86::TreeEvaluator::arraysetEvaluator(TR::Node *node, TR::CodeGenerator *cg)
+static void PackUseShift(TR::Node* node, TR::Register* tempReg, TR::Register* source, int size, TR::CodeGenerator* cg)
    {
-   // arrayset
-   //    address
-   //    fill value
-   //    array size (in bytes, unsigned)
-
-   TR::Node* addressNode  = node->getChild(0); // Adress
-   TR::Node* valueNode = node->getChild(1);    // Value
-   TR::Node* sizeNode  = node->getChild(2);    // Size
-
-   TR::Register* addressReg = TR::TreeEvaluator::intOrLongClobberEvaluate(addressNode, TR::Compiler->target.is64Bit(), cg);
-   TR::Register* valueReg = cg->evaluate(valueNode);
-   TR::Register* sizeReg = TR::TreeEvaluator::intOrLongClobberEvaluate(sizeNode, TR::TreeEvaluator::getNodeIs64Bit(sizeNode, cg), cg);
-
-   // Zero-extend array size if passed in as 32-bit on 64-bit architecture
-   if (TR::Compiler->target.is64Bit() && !TR::TreeEvaluator::getNodeIs64Bit(sizeNode, cg))
-   {
-       generateRegRegInstruction(MOVZXReg8Reg4, node, sizeReg, sizeReg, cg);
+   generateRegRegInstruction(MOV8RegReg, node, tempReg, source, cg);
+   generateRegImmInstruction(SHL8RegImm1, node, source, size*8, cg);
+   generateRegRegInstruction(OR8RegReg, node, source, tempReg, cg);
    }
 
-   // Convert array size to array element count
-   switch (valueNode->getSize())
+static void GenerateMoveInstruction(TR::Node* node, TR::Register* valueReg, uint8_t size, TR::Register* addressReg, int index, TR::CodeGenerator* cg)
+   {
+   switch(size)
       {
       case 1:
+         generateMemRegInstruction(S1MemReg,   node, generateX86MemoryReference(addressReg, index, cg), valueReg, cg);
+         break;
+      case 2:
+         generateMemRegInstruction(S2MemReg,   node, generateX86MemoryReference(addressReg, index, cg), valueReg, cg);
+         break;
+      case 4:
+         generateMemRegInstruction(S4MemReg,   node, generateX86MemoryReference(addressReg, index, cg), valueReg, cg);
+         break;
+      case 8:
+         generateMemRegInstruction(S8MemReg,   node, generateX86MemoryReference(addressReg, index, cg), valueReg, cg);
+         break;
+      case 16:
+         generateMemRegInstruction(MOVDQUMemReg, node, generateX86MemoryReference(addressReg, index, cg), valueReg, cg);
+         break;
+      }
+   }
+
+static void PackXMM(TR::Node* node, TR::Register* XMM, TR::Register* source, int8_t size, TR::CodeGenerator* cg)
+   {
+   switch(size)
+      {
+      case 1:
+         {
+         uint8_t MASK[] =
+            {
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            };
+         auto snippet = generateX86MemoryReference(cg->findOrCreate16ByteConstant(node, MASK), cg);
+         generateRegRegInstruction(MOVQRegReg8, node, XMM, source, cg);
+         TR::Register* tempReg = cg->allocateRegister(TR_FPR);
+         generateRegMemInstruction(MOVDQURegMem, node, tempReg, snippet, cg);
+         generateRegRegInstruction(PSHUFBRegReg, node, XMM, tempReg, cg);
+         cg->stopUsingRegister(tempReg);
+         break;
+         }
+      case 2:
+         {
+         uint8_t MASK[] =
+            {
+            0x00, 0x01, 0x00, 0x01,
+            0x00, 0x01, 0x00, 0x01,
+            0x00, 0x01, 0x00, 0x01,
+            0x00, 0x01, 0x00, 0x01,
+            };
+         auto snippet = generateX86MemoryReference(cg->findOrCreate16ByteConstant(node, MASK), cg);
+         generateRegRegInstruction(MOVQRegReg8, node, XMM, source, cg);
+         TR::Register* tempReg = cg->allocateRegister(TR_FPR);
+         generateRegMemInstruction(MOVDQURegMem, node, tempReg, snippet, cg);
+         generateRegRegInstruction(PSHUFBRegReg, node, XMM, tempReg, cg);
+         cg->stopUsingRegister(tempReg);
+         break;
+         }
+      case 4:
+         {
+         generateRegRegInstruction(MOVQRegReg8, node, XMM, source, cg);
+         generateRegRegImmInstruction(PSHUFDRegRegImm1, node, XMM, XMM, 0x0,  cg);
+         break;
+         }
+      case 8:
+         {
+         generateRegRegInstruction(MOVQRegReg8, node, XMM, source, cg);
+         generateRegRegImmInstruction(PSHUFDRegRegImm1, node, XMM, XMM, 0x44, cg);
+         break;
+         }
+      default:
+         {
+         TR_ASSERT(0, "Arrayset Evaluator: unsupported pack size");
+         break;
+         }
+      }
+   }
+
+static void ArraySetForShortConstantArraysWithZero(TR::Node* node, TR::Register* addressReg, uintptrj_t size, TR::CodeGenerator* cg)
+   {
+   // We do special optimization for zero because it happens very frequent.
+   // Note: Reg xor Reg will zero out Reg
+   // if size < 16:
+   //     zero out a GPR
+   //     use a greedy approach to store
+   // if size >= 16:
+   //     zero out a XMM
+   //     store XMM as many as we can
+   //     handle the reminder using shifting window
+   
+   TR::Register* tempReg = NULL;
+   if (size < 16)
+      {
+      tempReg = cg->allocateRegister();
+      generateRegRegInstruction(XOR8RegReg, node, tempReg, tempReg, cg);
+      int index = 0;
+      int8_t packs[4] = {8, 4, 2, 1};
+
+      for (int i=0; i<4; i++)
+         {
+         int moves = size/packs[i];
+         for (int j=0; j<moves; j++)
+            {
+            GenerateMoveInstruction(node, tempReg, packs[i], addressReg, index, cg);
+            index += packs[i];
+            }
+         size = size%packs[i];
+         }
+      }
+   else
+      {
+      tempReg = cg->allocateRegister(TR_FPR);
+      generateRegRegInstruction(XORPDRegReg, node, tempReg, tempReg, cg);
+      int moves = size/16;
+      for (int i=0; i<moves; i++)
+         {
+         GenerateMoveInstruction(node, tempReg, 16, addressReg, i*16, cg);
+         }
+      if (size%16 != 0) GenerateMoveInstruction(node, tempReg, 16, addressReg, size-16, cg);
+      }
+   cg->stopUsingRegister(tempReg);
+   }
+
+static void ArraySetForShortConstantArrays(TR::Node* node, uint8_t elementSize, TR::Register* addressReg, TR::Register* valueReg, uintptrj_t size, TR::CodeGenerator* cg)
+   {
+   const int notWorthPacking = 5;
+   const int totalSize = elementSize*size;
+   TR_ASSERT(elementSize <= 8, "Arrayset Evaluator: unsupported element size");
+   
+   int8_t packs[5] = {16, 8, 4, 2, 1};
+   int8_t moves[5] = {0};
+
+   // Compute the number of moves of each register size e.g. 16, 8, 4, 2, 1 byte
+   int tempTotalSize = totalSize;
+   for (int i=0; i<5; i++)
+      {
+      moves[i] += tempTotalSize/packs[i];
+      tempTotalSize = tempTotalSize%packs[i];
+      }
+
+   // If array size(# of bytes) less than 16 bytes, we do it by packing GPR.
+   //    e.g. array size is 14, element size is 2 bytes, here is the psudocode:
+   //    1. Pack a 4 bytes register from 2 bytes
+   //    2. Move 4 bytes into memory starting at array start address
+   //    3. Move 4 bytes into memory starting at array start address + 4
+   //    4. Move 4 bytes into memory starting at array start address + 8
+   //    5. Move 2 bytes into memory starting at array start address + 12
+   //    Note here we didn't pack a 8 bytes register because there will be only
+   //       one move for that 8 byte register, so the packing cost is too big for
+   //       just a single move.
+   // Else we pack an XMM first, and we handle the reminder using a "shifting window" method
+   //    e.g. array size is 17 byte, element size is 1 byte, here is the psudocode:
+   //    1. Pack an XMM register, xmmA, using PSHUFB
+   //    2. Store xmmA to memory at array start address
+   //    3. Store xmmA to memory at array start address + 1
+
+   if (totalSize < 16)
+      {
+      for (int i=1; i<5; i++)
+         {
+         if (packs[i] > elementSize && moves[i] <= notWorthPacking)
+            {
+            moves[i+1] += moves[i]*2;
+            moves[i] = 0;
+            }
+         else
+            {
+            break;
+            }
+         }
+      // Start packing
+      TR::Register* currentReg = valueReg;
+      for (int i=1; i<5; i++)
+         {
+         if (moves[i] > 0 && packs[i] > elementSize)
+            {
+            int currentSize = elementSize;
+            TR::Register* tempReg = cg->allocateRegister();
+            while(currentSize < packs[i])
+               {
+               PackUseShift(node, tempReg, currentReg, currentSize, cg);
+               currentSize *= 2;
+               }
+            cg->stopUsingRegister(tempReg);
+            break;
+            }
+         }
+
+      // Start moving
+      int index = 0;
+      for (int i=1;i<5;i++)
+         {
+         for (int j=0; j<moves[i]; j++)
+            {
+            GenerateMoveInstruction(node, currentReg, packs[i], addressReg, index, cg);
+            index += packs[i];
+            }
+         }
+      }
+   else
+      {
+      // First check if we are able to do it by just doing equal or less than notWorthPacking movs of the valueReg
+      if (size < notWorthPacking)
+         {
+         for (int i=0; i<size; i++)
+            {
+            GenerateMoveInstruction(node, valueReg, elementSize, addressReg, i*elementSize, cg);
+            }
+         }
+      else
+         {
+         TR::Register* XMM = cg->allocateRegister(TR_FPR);
+         PackXMM(node, XMM, valueReg, elementSize, cg);
+
+         for (int i=0; i<moves[0]; i++)
+            {
+            GenerateMoveInstruction(node, XMM, 16, addressReg, i*16, cg);
+            }
+         const int reminder = totalSize - moves[0]*16;
+         if (reminder == elementSize)
+            {
+            GenerateMoveInstruction(node, valueReg, elementSize, addressReg, moves[0]*16, cg);
+            }
+         else if (reminder != 0)
+            {
+            GenerateMoveInstruction(node, XMM, 16, addressReg, totalSize-16, cg);
+            }
+         cg->stopUsingRegister(XMM);
+         }
+      }
+   }
+
+inline void ArraySet64BitPrimitiveOn32BitISA(TR::Node* node, TR::Register* addressReg, TR::Register* valueReg, TR::Register* sizeReg, TR::CodeGenerator* cg)
+   {
+   TR::Register* XMM = cg->allocateRegister(TR_FPR);
+
+   TR::RegisterDependencyConditions* deps = generateRegisterDependencyConditions((uint8_t)0, (uint8_t)2, cg);
+   deps->addPostCondition(addressReg, TR::RealRegister::NoReg, cg);
+   deps->addPostCondition(sizeReg, TR::RealRegister::ecx, cg);
+
+   TR::LabelSymbol* startLabel = generateLabelSymbol(cg);
+   TR::LabelSymbol* endLabel = generateLabelSymbol(cg);
+   startLabel->setStartInternalControlFlow();
+   endLabel->setEndInternalControlFlow();
+
+   TR::LabelSymbol* loopLabel = generateLabelSymbol(cg);
+
+   generateLabelInstruction(LABEL, node, startLabel, cg);
+
+   // Load value to one XMM register
+   switch (valueReg->getKind())
+      {
+      case TR_GPR:
+         generateRegRegInstruction(MOVDRegReg4, node, XMM, valueReg->getHighOrder(), cg);
+         generateRegImmInstruction(PSLLQRegImm1, node, XMM, 32, cg);
+         generateRegRegInstruction(MOVDRegReg4, node, XMM, valueReg->getLowOrder(), cg);
+         break;
+      case TR_FPR:
+         generateRegRegInstruction(MOVDQURegReg, node, XMM, valueReg, cg);
+         break;
+      default:
+         TR_ASSERT(0, "Arrayset Evaluator: unsupported register type");
+         break;
+      }
+
+   // Store the XMM register to memory via a loop
+   // Example:
+   //   SHR RCX,3
+   //   JRCXZ endLabel
+   // loopLabel:
+   //   MOVQ [RDI+8*RCX-8],XMM0
+   //   LOOP loopLabel
+   // endLable:
+   //   # LOOP END
+   generateRegImmInstruction(SHRRegImm1(), node, sizeReg, 3, cg);
+   generateLabelInstruction(JRCXZ1, node, endLabel, cg);
+   generateLabelInstruction(LABEL, node, loopLabel, cg);
+   generateMemRegInstruction(MOVQMemReg, node, generateX86MemoryReference(addressReg, sizeReg, 3, -8, cg), XMM, cg);
+   generateLabelInstruction(LOOP1, node, loopLabel, cg);
+
+   generateLabelInstruction(LABEL, node, endLabel, deps, cg);
+   cg->stopUsingRegister(XMM);
+   }
+
+inline void ArraySetDefault(TR::Node* node, uint8_t elementSize, TR::Register* addressReg, TR::Register* valueReg, TR::Register* sizeReg, TR::CodeGenerator* cg)
+   {
+   TR::Register* EAX = cg->allocateRegister();
+
+   TR::RegisterDependencyConditions* stosDependencies = generateRegisterDependencyConditions((uint8_t)0, (uint8_t)3, cg);
+   stosDependencies->addPostCondition(EAX, TR::RealRegister::eax, cg);
+   stosDependencies->addPostCondition(sizeReg, TR::RealRegister::ecx, cg);
+   stosDependencies->addPostCondition(addressReg, TR::RealRegister::edi, cg);
+
+   // Load value to EAX
+   switch (valueReg->getKind())
+      {
+      case TR_GPR:
+         generateRegRegInstruction(MOVRegReg(elementSize == 8), node, EAX, valueReg, cg);
+         break;
+      case TR_FPR:
+         generateRegRegInstruction(elementSize == 8 ? MOVQReg8Reg : MOVDReg4Reg, node, EAX, valueReg, cg);
+         break;
+      default:
+         TR_ASSERT(0, "Arrayset Evaluator: unsupported register type");
+         break;
+      }
+
+   // Store EAX into memory
+   switch (elementSize)
+      {
+      case 1:
+         generateInstruction(REPSTOSB, node, stosDependencies, cg);
          break;
       case 2:
          generateRegImmInstruction(SHRRegImm1(cg), node, sizeReg, 1, cg);
+         generateInstruction(REPSTOSW, node, stosDependencies, cg);
          break;
       case 4:
          generateRegImmInstruction(SHRRegImm1(cg), node, sizeReg, 2, cg);
+         generateInstruction(REPSTOSD, node, stosDependencies, cg);
          break;
       case 8:
          generateRegImmInstruction(SHRRegImm1(cg), node, sizeReg, 3, cg);
+         generateInstruction(REPSTOSQ, node, stosDependencies, cg);
          break;
       default:
          TR_ASSERT(0, "Arrayset Evaluator: unsupported fill size");
          break;
       }
 
-   if (valueNode->getSize() == 8 && TR::Compiler->target.is32Bit())
+   cg->stopUsingRegister(EAX);
+   }
+
+TR::Register *OMR::X86::TreeEvaluator::arraysetEvaluator(TR::Node *node, TR::CodeGenerator *cg)
+   {
+   // JINGGE
+   // arrayset
+   //    address
+   //    fill value
+   //    array size (in bytes, unsigned)
+
+   //fprintf(stderr, "I am here\n");
+
+   TR::Node* addressNode  = node->getChild(0); // Adress
+   TR::Node* valueNode    = node->getChild(1); // Value
+   TR::Node* sizeNode     = node->getChild(2); // Size
+
+   TR::Register* addressReg = TR::TreeEvaluator::intOrLongClobberEvaluate(addressNode, TR::Compiler->target.is64Bit(), cg);
+   uintptrj_t size;
+   bool isSizeConst = false;
+   bool isValueZero = false;
+
+   bool IsShortConstantArray = false;
+   bool IsShortConstantArrayWithZero = false;
+
+   if (cg->getX86ProcessorInfo().supportsSSE4_1() && TR::Compiler->target.is64Bit())
       {
-      // 64-bit primitive on 32-bit architecture
-      TR::Register* XMM = cg->allocateRegister(TR_FPR);
-
-      TR::RegisterDependencyConditions* deps = generateRegisterDependencyConditions((uint8_t)0, (uint8_t)2, cg);
-      deps->addPostCondition(addressReg, TR::RealRegister::NoReg, cg);
-      deps->addPostCondition(sizeReg, TR::RealRegister::ecx, cg);
-
-      TR::LabelSymbol* startLabel = generateLabelSymbol(cg);
-      TR::LabelSymbol* endLabel = generateLabelSymbol(cg);
-      startLabel->setStartInternalControlFlow();
-      endLabel->setEndInternalControlFlow();
-
-      TR::LabelSymbol* loopLabel = generateLabelSymbol(cg);
-
-      generateLabelInstruction(LABEL, node, startLabel, cg);
-
-      // Load value to one XMM register
-      switch (valueReg->getKind())
+      if (valueNode->getOpCode().isLoadConst() && !valueNode->getOpCode().isFloat() && !valueNode->getOpCode().isDouble())
          {
-         case TR_GPR:
-            generateRegRegInstruction(MOVDRegReg4, node, XMM, valueReg->getHighOrder(), cg);
-            generateRegImmInstruction(PSLLQRegImm1, node, XMM, 32, cg);
-            generateRegRegInstruction(MOVDRegReg4, node, XMM, valueReg->getLowOrder(), cg);
-            break;
-         case TR_FPR:
-            generateRegRegInstruction(MOVDQURegReg, node, XMM, valueReg, cg);
-            break;
-         default:
-            TR_ASSERT(0, "Arrayset Evaluator: unsupported register type");
-            break;
+         if (0 == TR::TreeEvaluator::integerConstNodeValue(valueNode, cg)) isValueZero = true;
          }
 
-      // Store the XMM register to memory via a loop
-      // Example:
-      //   JRCXZ endLabel
-      // loopLabel:
-      //   MOVQ [RDI+8*RCX-8],XMM0
-      //   LOOP loopLabel
-      // endLable:
-      //   # LOOP END
-      generateLabelInstruction(JRCXZ1, node, endLabel, cg);
-      generateLabelInstruction(LABEL, node, loopLabel, cg);
-      generateMemRegInstruction(MOVQMemReg, node, generateX86MemoryReference(addressReg, sizeReg, 3, -8, cg), XMM, cg);
-      generateLabelInstruction(LOOP1, node, loopLabel, cg);
+      if (sizeNode->getOpCode().isLoadConst())
+         {
+         size = TR::TreeEvaluator::integerConstNodeValue(sizeNode, cg);
+         isSizeConst = true;
+         }
 
-      generateLabelInstruction(LABEL, node, endLabel, deps, cg);
-      cg->stopUsingRegister(XMM);
+         // Prerequisites of constant length optimization
+      if (isSizeConst && size < 256)
+         {
+         if (isValueZero)
+            IsShortConstantArrayWithZero = true;
+         else
+            IsShortConstantArray = true;
+         }
+      }
+
+   if (IsShortConstantArrayWithZero)
+      {
+      ArraySetForShortConstantArraysWithZero(node, addressReg, size, cg);
+      cg->recursivelyDecReferenceCount(sizeNode);
+      cg->recursivelyDecReferenceCount(valueNode);
+      }
+   else if (IsShortConstantArray)
+      {
+      TR::Register* valueReg;
+      if (valueNode->getOpCode().isFloat() || valueNode->getOpCode().isDouble())
+         {
+         TR::Register* tempReg = cg->evaluate(valueNode);
+         TR_ASSERT(tempReg->getKind() == TR_FPR, "Float and Double must be in an XMM register");
+         valueReg = cg->allocateRegister();
+         generateRegRegInstruction(valueNode->getSize() == 8 ? MOVQReg8Reg : MOVDReg4Reg, node, valueReg, tempReg, cg);
+         cg->stopUsingRegister(tempReg);
+         }
+      else
+         {
+         valueReg = TR::TreeEvaluator::intOrLongClobberEvaluate(valueNode, getNodeIs64Bit(valueNode, cg), cg);
+         }
+      ArraySetForShortConstantArrays(node, valueNode->getSize(), addressReg, valueReg, size/valueNode->getSize(), cg);
+      cg->recursivelyDecReferenceCount(sizeNode);
+      cg->decReferenceCount(valueNode);
+      cg->stopUsingRegister(valueReg);
       }
    else
       {
-      TR::Register* EAX = cg->allocateRegister();
+      TR::Register* sizeReg = TR::TreeEvaluator::intOrLongClobberEvaluate(sizeNode, getNodeIs64Bit(sizeNode, cg), cg);
+      TR::Register* valueReg = cg->evaluate(valueNode);
 
-      TR::RegisterDependencyConditions* stosDependencies = generateRegisterDependencyConditions((uint8_t)0, (uint8_t)3, cg);
-      stosDependencies->addPostCondition(EAX, TR::RealRegister::eax, cg);
-      stosDependencies->addPostCondition(sizeReg, TR::RealRegister::ecx, cg);
-      stosDependencies->addPostCondition(addressReg, TR::RealRegister::edi, cg);
-
-      // Load value to EAX
-      switch (valueReg->getKind())
+      // Zero-extend array size if passed in as 32-bit on 64-bit architecture
+      if (TR::Compiler->target.is64Bit() && !getNodeIs64Bit(sizeNode, cg))
          {
-         case TR_GPR:
-            generateRegRegInstruction(MOVRegReg(valueNode->getSize() == 8), node, EAX, valueReg, cg);
-            break;
-         case TR_FPR:
-            generateRegRegInstruction(valueNode->getSize() == 8 ? MOVQReg8Reg : MOVDReg4Reg, node, EAX, valueReg, cg);
-            break;
-         default:
-            TR_ASSERT(0, "Arrayset Evaluator: unsupported register type");
-            break;
+         generateRegRegInstruction(MOVZXReg8Reg4, node, sizeReg, sizeReg, cg);
          }
-
-      // Store EAX into memory
-      switch (valueNode->getSize())
+      if (valueNode->getSize() == 8 && TR::Compiler->target.is32Bit())
          {
-         case 1:
-            generateInstruction(REPSTOSB, node, stosDependencies, cg);
-            break;
-         case 2:
-            generateInstruction(REPSTOSW, node, stosDependencies, cg);
-            break;
-         case 4:
-            generateInstruction(REPSTOSD, node, stosDependencies, cg);
-            break;
-         case 8:
-            generateInstruction(REPSTOSQ, node, stosDependencies, cg);
-            break;
-         default:
-            TR_ASSERT(0, "Arrayset Evaluator: unsupported fill size");
-            break;
+         ArraySet64BitPrimitiveOn32BitISA(node, addressReg, valueReg, sizeReg, cg);
          }
-
-      cg->stopUsingRegister(EAX);
+      else
+         {
+         ArraySetDefault(node, valueNode->getSize(), addressReg, valueReg, sizeReg, cg);
+         }
+      cg->decReferenceCount(sizeNode);
+      cg->decReferenceCount(valueNode);
+      cg->stopUsingRegister(sizeReg);
+      cg->stopUsingRegister(valueReg);
       }
-
-   cg->stopUsingRegister(sizeReg);
    cg->stopUsingRegister(addressReg);
-   cg->decReferenceCount(sizeNode);
-   cg->decReferenceCount(valueNode);
    cg->decReferenceCount(addressNode);
    return NULL;
    }
