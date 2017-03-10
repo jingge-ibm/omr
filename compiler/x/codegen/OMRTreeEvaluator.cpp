@@ -2585,8 +2585,7 @@ TR::Register *OMR::X86::TreeEvaluator::overflowCHKEvaluator(TR::Node *node, TR::
    }
 
 extern "C" void *fwdHalfWordCopyTable;
-
-TR::Register *OMR::X86::TreeEvaluator::arraycopyEvaluator(TR::Node *node, TR::CodeGenerator *cg)
+static TR::Register * old_arraycopyEvaluator(TR::Node *node, TR::CodeGenerator *cg)
    {
    TR::Instruction *instr;
    TR::LabelSymbol *snippetLabel;
@@ -3216,6 +3215,499 @@ TR::Register *OMR::X86::TreeEvaluator::arraycopyEvaluator(TR::Node *node, TR::Co
    return NULL;
    }
 
+static void generateRepMovsInstruction(TR_X86OpCodes REPMOVS, TR::Node *node, TR::Register* sizeRegister, TR::RegisterDependencyConditions* dependencies, TR::CodeGenerator *cg)
+   {
+   switch (REPMOVS)
+      {
+      case REPMOVSQ:
+         generateRegImmInstruction(SHRRegImm1(), node, sizeRegister, 3, cg);
+         break;
+      case REPMOVSD:
+         generateRegImmInstruction(SHRRegImm1(), node, sizeRegister, 2, cg);
+         break;
+      case REPMOVSW:
+         generateRegImmInstruction(SHRRegImm1(), node, sizeRegister, 1, cg);
+         break;
+      case REPMOVSB:
+         break;
+      default:
+         TR_ASSERT(false, "Invalid REP MOVS opcode [%d]", REPMOVS);
+         break;
+      }
+   generateInstruction(REPMOVS, node, dependencies, cg);
+   }
+
+static void arrayCopy64BitPrimitiveOnIA32(TR::Node* node, TR::Register* dstReg, TR::Register* srcReg, TR::Register* sizeReg, TR::CodeGenerator* cg)
+   {
+   TR::Register* scrach = cg->allocateRegister();
+   TR::Register* XMM = cg->allocateRegister(TR_FPR);
+
+   TR::RegisterDependencyConditions* dependencies = generateRegisterDependencyConditions((uint8_t)0, (uint8_t)5, cg);
+   dependencies->addPostCondition(scrach, TR::RealRegister::ByteReg, cg);
+   dependencies->addPostCondition(XMM, TR::RealRegister::NoReg, cg);
+   dependencies->addPostCondition(srcReg, TR::RealRegister::NoReg, cg);
+   dependencies->addPostCondition(dstReg, TR::RealRegister::NoReg, cg);
+   dependencies->addPostCondition(sizeReg, TR::RealRegister::ecx, cg);
+
+   TR::LabelSymbol* startLabel = generateLabelSymbol(cg);
+   TR::LabelSymbol* endLabel = generateLabelSymbol(cg);
+   startLabel->setStartInternalControlFlow();
+   endLabel->setEndInternalControlFlow();
+
+   TR::LabelSymbol* loopLabel = generateLabelSymbol(cg);
+
+   generateLabelInstruction(LABEL, node, startLabel, cg);
+
+   // Example:
+   //
+   // ; decide direction
+   //   SUB   EDI,ESI
+   //   CMP   EDI,ECX
+   //   LEA   EDI,[EDI+ESI]
+   //   LEA   EAX,[ESI+ECX-8]
+   //   CMOVB ESI,EAX
+   //   LEA   EAX,[EDI+ECX-8]
+   //   CMOVB EDI,EAX
+   //   SETAE AL
+   //   MOVZX EAX,AL
+   //   LEA   EAX,[2*EAX-1]
+   //
+   // ; copy
+   //   SHR  ECX,3
+   //   JRCXZ endLabel
+   // loopLabel:
+   //   MOVQ XMM0,[ESI]
+   //   MOVQ [EDI],XMM0
+   //   LEA  ESI,[ESI+8*EAX]
+   //   LEA  EDI,[EDI+8*EAX]
+   //   LOOP loopLabel
+   // endLable:
+   //   # LOOP END
+   if (node->isForwardArrayCopy())
+      {
+      generateRegImmInstruction(MOV4RegImm4, node, scrach, 1, cg);
+      }
+   else if (node->isBackwardArrayCopy())
+      {
+      generateRegMemInstruction(LEA4RegMem, node, srcReg, generateX86MemoryReference(srcReg, sizeReg, 0, -8, cg), cg);
+      generateRegMemInstruction(LEA4RegMem, node, dstReg, generateX86MemoryReference(dstReg, sizeReg, 0, -8, cg), cg);
+      generateRegImmInstruction(MOV4RegImm4, node, scrach, -1, cg);
+      }
+   else // decide direction during runtime
+      {
+      generateRegRegInstruction(SUB4RegReg, node, dstReg, srcReg, cg);  // dst = dst - src
+      generateRegRegInstruction(CMP4RegReg, node, dstReg, sizeReg, cg); // cmp dst, size
+      generateRegMemInstruction(LEA4RegMem, node, dstReg, generateX86MemoryReference(dstReg, srcReg, 0, cg), cg); // dst = dst + src
+
+      generateRegMemInstruction(LEA4RegMem, node, scrach, generateX86MemoryReference(srcReg, sizeReg, 0, -8, cg), cg);
+      generateRegRegInstruction(CMOVB4RegReg, node, srcReg, scrach, cg);
+      generateRegMemInstruction(LEA4RegMem, node, scrach, generateX86MemoryReference(dstReg, sizeReg, 0, -8, cg), cg);
+      generateRegRegInstruction(CMOVB4RegReg, node, dstReg, scrach, cg);
+
+      generateRegInstruction(SETAE1Reg, node, scrach, cg);
+      generateRegRegInstruction(MOVZXReg4Reg1, node, scrach, scrach, cg);
+      generateRegMemInstruction(LEA4RegMem, node, scrach, generateX86MemoryReference(NULL, scrach, 1, -1, cg), cg);
+      }
+
+   generateRegImmInstruction(SHR4RegImm1, node, sizeReg, 3, cg);
+   generateLabelInstruction(JRCXZ1, node, endLabel, cg);
+   generateLabelInstruction(LABEL, node, loopLabel, cg);
+   generateRegMemInstruction(MOVQRegMem, node, XMM, generateX86MemoryReference(srcReg, 0, cg), cg);
+   generateMemRegInstruction(MOVQMemReg, node, generateX86MemoryReference(dstReg, 0, cg), XMM, cg);
+   generateRegMemInstruction(LEA4RegMem, node, srcReg, generateX86MemoryReference(srcReg, scrach, 3, cg), cg);
+   generateRegMemInstruction(LEA4RegMem, node, dstReg, generateX86MemoryReference(dstReg, scrach, 3, cg), cg);
+   generateLabelInstruction(LOOP1, node, loopLabel, cg);
+
+   generateLabelInstruction(LABEL, node, endLabel, dependencies, cg);
+   cg->stopUsingRegister(XMM);
+   cg->stopUsingRegister(scrach);
+   }
+
+static void arrayCopyDefault(TR::Node* node, uint8_t elementSize, TR::Register* dstReg, TR::Register* srcReg, TR::Register* sizeReg, TR::CodeGenerator* cg)
+   {
+   TR::RegisterDependencyConditions* dependencies = generateRegisterDependencyConditions((uint8_t)3, (uint8_t)0, cg);
+   dependencies->addPreCondition(srcReg, TR::RealRegister::esi, cg);
+   dependencies->addPreCondition(dstReg, TR::RealRegister::edi, cg);
+   dependencies->addPreCondition(sizeReg, TR::RealRegister::ecx, cg);
+
+   TR_X86OpCodes REPMOVS;
+   switch (elementSize)
+      {
+      case 8:
+         REPMOVS = REPMOVSQ;
+         break;
+      case 4:
+         REPMOVS = REPMOVSD;
+         break;
+      case 2:
+         REPMOVS = REPMOVSW;
+         break;
+      default:
+         REPMOVS = REPMOVSB;
+         break;
+      }
+   if (node->isForwardArrayCopy())
+      {
+      generateRepMovsInstruction(REPMOVS, node, sizeReg, dependencies, cg);
+      }
+   else if (node->isBackwardArrayCopy())
+      {
+      generateRegMemInstruction(LEARegMem(), node, srcReg, generateX86MemoryReference(srcReg, sizeReg, 0, -(intptr_t)elementSize, cg), cg);
+      generateRegMemInstruction(LEARegMem(), node, dstReg, generateX86MemoryReference(dstReg, sizeReg, 0, -(intptr_t)elementSize, cg), cg);
+      generateInstruction(STD, node, cg);
+      generateRepMovsInstruction(REPMOVS, node, sizeReg, dependencies, cg);
+      generateInstruction(CLD, node, cg);
+      }
+   else // decide direction during runtime
+      {
+      TR::LabelSymbol* labelDirectionTestBegin = generateLabelSymbol(cg);
+      TR::LabelSymbol* labelDirectionTestEnd = generateLabelSymbol(cg);
+      labelDirectionTestBegin->setStartInternalControlFlow();
+      labelDirectionTestEnd->setEndInternalControlFlow();
+
+      generateLabelInstruction(LABEL, node, labelDirectionTestBegin, cg);
+
+      generateRegRegInstruction(SUBRegReg(), node, dstReg, srcReg, cg);  // dst = dst - src
+      generateRegRegInstruction(CMPRegReg(), node, dstReg, sizeReg, cg); // cmp dst, size
+      generateRegMemInstruction(LEARegMem(), node, dstReg, generateX86MemoryReference(dstReg, srcReg, 0, cg), cg); // dst = dst + src
+      generateLabelInstruction(JAE4, node, labelDirectionTestEnd, cg);   // jae, skip backward copy setup
+
+      generateRegMemInstruction(LEARegMem(), node, srcReg, generateX86MemoryReference(srcReg, sizeReg, 0, -(intptr_t)elementSize, cg), cg);
+      generateRegMemInstruction(LEARegMem(), node, dstReg, generateX86MemoryReference(dstReg, sizeReg, 0, -(intptr_t)elementSize, cg), cg);
+      generateInstruction(STD, node, cg);
+      generateLabelInstruction(LABEL, node, labelDirectionTestEnd, cg);
+
+      generateRepMovsInstruction(REPMOVS, node, sizeReg, dependencies, cg);
+      generateInstruction(CLD, node, cg);
+      }
+   }
+
+
+static void generateStoreInstructions(TR::Node* node, TR::Register* addressReg, int32_t index, TR::Register* valueReg, uint8_t size,  TR::CodeGenerator* cg)
+   {
+   TR_X86OpCodes storeOpcode;
+   if (valueReg->getKind() == TR_FPR)
+      {
+      switch (size)
+         {
+         case 4:
+            storeOpcode = MOVDMemReg;
+            break;
+         case 8:
+            storeOpcode = MOVQMemReg;
+            break;
+         case 16:
+            storeOpcode = MOVDQUMemReg;
+            break;
+         }
+      }
+   else 
+      {
+      switch (size)
+         {
+         case 1:
+            storeOpcode = S1MemReg;
+            break;
+         case 2:
+            storeOpcode = S2MemReg;
+            break;
+         case 4:
+            storeOpcode = S4MemReg;
+            break;
+         case 8:
+            storeOpcode = S8MemReg;
+            break;
+
+         }
+      }
+   generateMemRegInstruction(storeOpcode, node, generateX86MemoryReference(addressReg, index, cg), valueReg, cg);
+   }
+
+static void generateLoadInstructions(TR::Node* node, TR::Register* valueReg, uint8_t size, TR::Register* addressReg, int32_t index, TR::CodeGenerator* cg)
+   {
+   TR_X86OpCodes loadOpCode;
+   if (valueReg->getKind() == TR_FPR)
+      {
+      switch (size)
+         {
+         case 4:
+            loadOpCode  = MOVDRegMem;
+            break;
+         case 8:
+            loadOpCode  = MOVQRegMem;
+            break;
+         case 16:
+            loadOpCode  = MOVDQURegMem;
+            break;
+         }
+      }
+   else 
+      {
+      switch (size)
+         {
+         case 1:
+            loadOpCode  = L1RegMem;
+            break;
+         case 2:
+            loadOpCode  = L2RegMem;
+            break;
+         case 4:
+            loadOpCode  = L4RegMem;
+            break;
+         case 8:
+            loadOpCode  = L8RegMem;
+            break;
+
+         }
+      }
+   generateRegMemInstruction(loadOpCode,  node, valueReg, generateX86MemoryReference(addressReg, index, cg), cg);
+   }
+
+static void arraycopyForShortConstArrayWithDirection(TR::Node* node, uint32_t elementSize, TR::Register* dstReg, TR::Register* srcReg, uint32_t size, TR::CodeGenerator *cg, bool forward) 
+   {
+   TR::Register* tempReg = cg->allocateRegister(TR_GPR);
+   if (forward)
+      {
+      for (uint32_t i=0; i<size; i++)
+         {
+         generateLoadInstructions(node, tempReg, elementSize, srcReg, i*elementSize, cg);
+         generateStoreInstructions(node, dstReg, i*elementSize, tempReg, elementSize, cg);
+         }
+      }
+   else
+      {
+      for (uint32_t i=size-1; i>=0; i--)
+         {
+         generateLoadInstructions(node, tempReg, elementSize, srcReg, i*elementSize, cg);
+         generateStoreInstructions(node, dstReg, i*elementSize, tempReg, elementSize, cg);
+         }
+      }
+   cg->stopUsingRegister(tempReg);
+   }
+
+
+static void arraycopyForShortConstArrayWithoutDirection(TR::Node* node, uint32_t elementSize, TR::Register* dstReg, TR::Register* srcReg, uint32_t size, TR::CodeGenerator *cg)
+   {
+   // jingge
+   uint32_t totalSize = size*elementSize;
+   uint32_t tempTotalSize = totalSize;
+
+   uint32_t moves[5];
+   static uint32_t regSize[] = {16, 8, 4, 2, 1};
+
+   for (uint32_t i=0; i<5; i++)
+      {
+      moves[i] = tempTotalSize/regSize[i];
+      tempTotalSize = tempTotalSize%regSize[i];
+      }
+
+   TR::Register* xmmUsed[8] = {NULL};
+   // First load as many bytes as possible into XMM
+   for (uint32_t i=0; i<moves[0]; i++)
+      {
+      TR::Register* xmmReg = cg->allocateRegister(TR_FPR);
+      generateLoadInstructions(node, xmmReg, 16, srcReg, i*16, cg);
+      xmmUsed[i] = xmmReg;
+      }
+
+   // Note: The worst case, moves = [X, 1, 1, 1, 1]
+   // 
+   // If we can do it just using one gpr, do it
+   // If we can do it with one gpr and one xmm, do it
+   // If total size is >= 16, use shift window
+   // Use two gpr
+
+   int32_t residue = totalSize%16;
+   TR::Register* reg1 = NULL;
+   TR::Register* reg2 = NULL;
+   int32_t residueCase = 0;
+
+   int32_t firstLoadSizeForCase4, secondLoadSizeForCase4;
+
+   if (residue == 1 || residue == 2 || residue == 4 || residue == 8) // 1 gpr
+      {
+      generateLoadInstructions(node, srcReg, residue, srcReg, totalSize - residue, cg);
+      reg1 = srcReg;
+      residueCase = 1;
+      }
+   else if (totalSize > 16 && residue > 0) // shift 1 xmm
+      {
+      reg1 = cg->allocateRegister(TR_FPR);
+      generateLoadInstructions(node, reg1, 16, srcReg, totalSize - 16, cg);
+      residueCase = 2;
+      }
+   else if (residue == 3) // 2 gpr
+      {
+      reg1 = cg->allocateRegister(TR_GPR);
+      reg2 = srcReg;
+      generateLoadInstructions(node, reg1, 1, srcReg, 0, cg);
+      generateLoadInstructions(node, reg2, 2, srcReg, 1, cg);
+      residueCase = 3;
+      }
+   else if (residue != 0) // 1 gpr + 1 xmm
+      {
+      reg1 = cg->allocateRegister(TR_FPR);
+      reg2 = srcReg;
+      firstLoadSizeForCase4  = residue>8? 8:4;
+      secondLoadSizeForCase4 = (residue - firstLoadSizeForCase4);
+      if (secondLoadSizeForCase4 > 4)
+         secondLoadSizeForCase4 = 8;
+      else if (secondLoadSizeForCase4 == 3)
+         secondLoadSizeForCase4 = 4;
+
+      generateLoadInstructions(node, reg1, firstLoadSizeForCase4,  srcReg, 0, cg);
+      generateLoadInstructions(node, reg2, secondLoadSizeForCase4, srcReg, residue-secondLoadSizeForCase4, cg);
+      residueCase = 4;
+      }
+
+   for (int32_t i=0; i<moves[0]; i++)
+      {
+      generateStoreInstructions(node, dstReg, i*16, xmmUsed[i], 16, cg);
+      cg->stopUsingRegister(xmmUsed[i]);
+      }
+
+   switch (residueCase)
+      {
+      case 0:
+         break;
+      case 1:
+         generateStoreInstructions(node, dstReg, totalSize - residue, reg1, residue, cg);
+         break;
+      case 2:
+         generateStoreInstructions(node, dstReg, totalSize - 16, reg1, 16, cg);
+         cg->stopUsingRegister(reg1);
+         break;
+      case 3:
+         generateStoreInstructions(node, dstReg, 0, reg1, 1, cg);
+         generateStoreInstructions(node, dstReg, 1, reg2, 2, cg);
+         cg->stopUsingRegister(reg1);
+         break;
+      case 4:
+         generateStoreInstructions(node, dstReg, 0, reg1, firstLoadSizeForCase4, cg);
+         generateStoreInstructions(node, dstReg, totalSize - secondLoadSizeForCase4, reg2, secondLoadSizeForCase4, cg);
+         cg->stopUsingRegister(reg1);
+         break;
+      }
+   }
+
+TR::Register *OMR::X86::TreeEvaluator::arraycopyEvaluator(TR::Node *node,  TR::CodeGenerator *cg)
+   {
+   static bool UseOldArraycopy = feGetEnv("TR_UseOldArraycopy"); 
+   if (UseOldArraycopy)
+      {
+      return old_arraycopyEvaluator(node, cg);
+      }
+   if (node->isReferenceArrayCopy() && !node->isNoArrayStoreCheckArrayCopy())
+      {
+      return TR::TreeEvaluator::VMarrayStoreCheckArrayCopyEvaluator(node, cg);
+      }
+   // There are two cases.
+   // In the first case we know that a simple memmove or memcpy operation can
+   // be done. For this case there are 3 children:
+   //    1) The byte source pointer
+   //    2) The byte destination pointer
+   //    3) The byte count
+   //
+   // In the second case we must generate run-time tests to see if a simple
+   // byte copy can be done or if an element-by-element copy is needed.
+   // For this case there are 5 children:
+   //    1) The original source object reference
+   //    2) The original destination object reference
+   //    3) The byte source pointer
+   //    4) The byte destination pointer
+   //    5) The byte count
+   //
+
+   // ALL nodes need be evaluated to comply argument evaluation order;
+   // since size node is the last node, its evaluation can be delayed for further optimization
+   TR::Node* sizeNode = node->getLastChild();
+   for (int i = 0; i < node->getNumChildren()-1; i++)
+      {
+      cg->evaluate(node->getChild(i));
+      }
+
+   TR::Register* srcReg = cg->allocateRegister();
+   TR::Register* dstReg = cg->allocateRegister();
+   generateRegRegInstruction(MOVRegReg(), node, srcReg, node->getChild(node->getNumChildren() - 3)->getRegister(), cg);
+   generateRegRegInstruction(MOVRegReg(), node, dstReg, node->getChild(node->getNumChildren() - 2)->getRegister(), cg);
+
+   TR::DataType dt = node->getArrayCopyElementType();
+   uint32_t elementSize = 1;
+   static bool ForceByteArrayElementCopy = feGetEnv("TR_ForceByteArrayElementCopy");
+   if (!ForceByteArrayElementCopy)
+      {
+      if (node->isReferenceArrayCopy() || dt == TR::Address)
+         elementSize = TR::Compiler->om.sizeofReferenceField();
+      else
+         elementSize = TR::Symbol::convertTypeToSize(dt);
+      }
+
+   bool isShortConstArrayWithDirection = false;
+   bool isShortConstArrayWithoutDirection = false;
+   uint32_t size;
+
+   // fprintf(stderr, "arraycopy\n" );
+   if (sizeNode->getOpCode().isLoadConst())
+      {
+      size = TR::TreeEvaluator::integerConstNodeValue(sizeNode, cg)/elementSize;
+      // fprintf(stderr, "const %d\n", size);
+      if (node->isForwardArrayCopy() || node->isBackwardArrayCopy())
+         {
+         // fprintf(stderr, "With direction %d\n", node->isForwardArrayCopy());
+         if (size <= 10) isShortConstArrayWithDirection = true;
+         }
+      else
+         {
+         if (size*elementSize <= 16*4) isShortConstArrayWithoutDirection = true;
+         }
+      }
+
+   if (isShortConstArrayWithDirection)
+      {
+      // fprintf(stderr, "first\n" );
+      arraycopyForShortConstArrayWithDirection(node, elementSize, dstReg, srcReg, size, cg, node->isForwardArrayCopy());
+      cg->recursivelyDecReferenceCount(sizeNode);
+      }
+   else if (isShortConstArrayWithoutDirection)
+      {
+      // fprintf(stderr, "second\n" );
+      arraycopyForShortConstArrayWithoutDirection(node, elementSize, dstReg, srcReg, size, cg);
+      cg->recursivelyDecReferenceCount(sizeNode);
+      }
+   else
+      {
+      TR::Register* sizeReg = intOrLongClobberEvaluate(sizeNode, getNodeIs64Bit(sizeNode, cg), cg);
+      if (TR::Compiler->target.is64Bit() && !getNodeIs64Bit(sizeNode, cg))
+         {
+         generateRegRegInstruction(MOVZXReg8Reg4, node, sizeReg, sizeReg, cg);
+         }
+      if (elementSize == 8 && TR::Compiler->target.is32Bit())
+         {
+         arrayCopy64BitPrimitiveOnIA32(node, dstReg, srcReg, sizeReg, cg);
+         }
+      else
+         {
+         arrayCopyDefault(node, elementSize, dstReg, srcReg, sizeReg, cg);
+         }
+      cg->stopUsingRegister(sizeReg);
+      cg->decReferenceCount(sizeNode);
+      }
+
+   cg->stopUsingRegister(dstReg);
+   cg->stopUsingRegister(srcReg);
+   if (node->isReferenceArrayCopy())
+      {
+#ifdef J9_PROJECT_SPECIFIC
+      TR::TreeEvaluator::generateWrtbarForArrayCopy(node, cg);
+#endif
+      }
+   for (int i = 0; i < node->getNumChildren()-1; i++)
+      {
+      cg->decReferenceCount(node->getChild(i));
+      }
+   return NULL;
+   }
+
 TR::Register *OMR::X86::TreeEvaluator::reverseLoadEvaluator(TR::Node *node, TR::CodeGenerator *cg)
    {
    TR_ASSERT(0, "reverseLoad not implemented yet for this platform");
@@ -3410,30 +3902,6 @@ static void packUsingShift(TR::Node* node, TR::Register* tempReg, TR::Register* 
    generateRegRegInstruction(OR8RegReg, node, sourceReg, tempReg, cg);
    }
 
-static void generateMovToMemInstructionsForArrayset(TR::Node* node, TR::Register* valueReg, uint8_t size, TR::Register* addressReg, int32_t index, TR::CodeGenerator* cg)
-   {
-   TR_X86OpCodes opcode;
-   switch(size)
-      {
-      case 1:
-         opcode = S1MemReg;
-         break;
-      case 2:
-         opcode = S2MemReg;
-         break;
-      case 4:
-         opcode = S4MemReg;
-         break;
-      case 8:
-         opcode = S8MemReg;
-         break;
-      case 16:
-         opcode = MOVDQUMemReg;
-         break;
-      }
-   generateMemRegInstruction(opcode, node, generateX86MemoryReference(addressReg, index, cg), valueReg, cg);
-   }
-
 static void packXMMWithMultipleValues(TR::Node* node, TR::Register* XMMReg, TR::Register* sourceReg, int8_t size, TR::CodeGenerator* cg)
    {
    switch(size)
@@ -3500,7 +3968,7 @@ static void arraySetToZeroForShortConstantArrays(TR::Node* node, TR::Register* a
          int32_t moves = size/packs[i];
          for (int32_t j=0; j<moves; j++)
             {
-            generateMovToMemInstructionsForArrayset(node, tempReg, packs[i], addressReg, index, cg);
+            generateStoreInstructions(node, addressReg, index, tempReg, packs[i],  cg);
             index += packs[i];
             }
          size = size%packs[i];
@@ -3513,9 +3981,9 @@ static void arraySetToZeroForShortConstantArrays(TR::Node* node, TR::Register* a
       int32_t moves = size/16;
       for (int32_t i=0; i<moves; i++)
          {
-         generateMovToMemInstructionsForArrayset(node, tempReg, 16, addressReg, i*16, cg);
+         generateStoreInstructions(node, addressReg, i*16, tempReg, 16,  cg);
          }
-      if (size%16 != 0) generateMovToMemInstructionsForArrayset(node, tempReg, 16, addressReg, size-16, cg);
+      if (size%16 != 0) generateStoreInstructions(node, addressReg, size-16, tempReg, 16,  cg);
       }
    cg->stopUsingRegister(tempReg);
    }
@@ -3590,7 +4058,7 @@ static void arraySetForShortConstantArrays(TR::Node* node, uint8_t elementSize, 
          {
          for (int32_t j=0; j<moves[i]; j++)
             {
-            generateMovToMemInstructionsForArrayset(node, currentReg, packs[i], addressReg, index, cg);
+            generateStoreInstructions(node, addressReg, index, currentReg, packs[i], cg);
             index += packs[i];
             }
          }
@@ -3602,7 +4070,7 @@ static void arraySetForShortConstantArrays(TR::Node* node, uint8_t elementSize, 
          {
          for (int32_t i=0; i<size; i++)
             {
-            generateMovToMemInstructionsForArrayset(node, valueReg, elementSize, addressReg, i*elementSize, cg);
+            generateStoreInstructions(node, addressReg, i*elementSize, valueReg, elementSize, cg);
             }
          }
       else
@@ -3612,16 +4080,16 @@ static void arraySetForShortConstantArrays(TR::Node* node, uint8_t elementSize, 
 
          for (int32_t i=0; i<moves[0]; i++)
             {
-            generateMovToMemInstructionsForArrayset(node, XMM, 16, addressReg, i*16, cg);
+            generateStoreInstructions(node, addressReg, i*16, XMM, 16, cg);
             }
          const int32_t reminder = totalSize - moves[0]*16;
          if (reminder == elementSize)
             {
-            generateMovToMemInstructionsForArrayset(node, valueReg, elementSize, addressReg, moves[0]*16, cg);
+            generateStoreInstructions(node, addressReg, moves[0]*16, valueReg, elementSize, cg);
             }
          else if (reminder != 0)
             {
-            generateMovToMemInstructionsForArrayset(node, XMM, 16, addressReg, totalSize-16, cg);
+            generateStoreInstructions(node, addressReg, totalSize-16, XMM, 16, cg);
             }
          cg->stopUsingRegister(XMM);
          }

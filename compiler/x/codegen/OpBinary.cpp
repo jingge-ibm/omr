@@ -146,6 +146,7 @@ const TR_X86OpCode::TR_OpCodeBinaryEntry TR_X86OpCode::_binaryEncodings[IA32NumO
       {0xff, 0x10, 0x00, 2},    // CALLREXMem (AMD64)
       {0x98, 0x00, 0x00, 1},    // CBWAcc
       {0x98, 0x00, 0x00, 1},    // CBWEAcc
+      {0xfc, 0x00, 0x00, 1},    // CLD
       {0x0f, 0x47, 0x00, 3},    // CMOVA4RegMem
       {0x0f, 0x42, 0x00, 3},    // CMOVB4RegMem
       {0x0f, 0x44, 0x00, 3},    // CMOVE4RegMem
@@ -519,6 +520,7 @@ const TR_X86OpCode::TR_OpCodeBinaryEntry TR_X86OpCode::_binaryEncodings[IA32NumO
       {0x8b, 0xc0, 0x00, 2},    // MOV2RegReg
       {0x8b, 0xc0, 0x00, 2},    // MOV4RegReg
       {0x8b, 0xc0, 0x00, 2},    // MOV8RegReg (AMD64)
+      {0x0f, 0x42, 0xc0, 3},    // CMOVB4RegReg
       {0x0f, 0x4f, 0xc0, 3},    // CMOVG4RegReg
       {0x0f, 0x4f, 0xc0, 3},    // CMOVG8RegReg (AMD64)
       {0x0f, 0x4c, 0xc0, 3},    // CMOVL4RegReg
@@ -534,6 +536,8 @@ const TR_X86OpCode::TR_OpCodeBinaryEntry TR_X86OpCode::_binaryEncodings[IA32NumO
       {0xb8, 0x00, 0x00, 1},    // MOV8RegImm64 (AMD64)
       {0x0f, 0x12, 0x00, 3},    // MOVLPDRegMem
       {0x0f, 0x13, 0x00, 3},    // MOVLPDMemReg
+      {0x0f, 0x6e, 0x00, 3},    // MOVDRegMem
+      {0x0f, 0x7e, 0x00, 3},    // MOVDMemReg     
       {0x0f, 0x7e, 0x00, 3},    // MOVQRegMem
       {0x0f, 0xd6, 0x00, 3},    // MOVQMemReg
       {0xa4, 0x00, 0x00, 1},    // MOVSB
@@ -769,6 +773,7 @@ const TR_X86OpCode::TR_OpCodeBinaryEntry TR_X86OpCode::_binaryEncodings[IA32NumO
       {0x0f, 0xad, 0xc0, 3},    // SHRD4RegRegCL
       {0x0f, 0xac, 0x00, 3},    // SHRD4MemRegImm1
       {0x0f, 0xad, 0x00, 3},    // SHRD4MemRegCL
+      {0xfd, 0x00, 0x00, 1},    // STD
       {0xaa, 0x00, 0x00, 1},    // STOSB
       {0xab, 0x00, 0x00, 1},    // STOSW
       {0xab, 0x00, 0x00, 1},    // STOSD

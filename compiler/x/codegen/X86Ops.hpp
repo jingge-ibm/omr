@@ -150,6 +150,7 @@ typedef enum {
    CALLREXMem,      // Call near, indirect through Memory, force Rex prefix (AMD64)
    CBWAcc,          // Sign extend AL into AX
    CBWEAcc,         // Sign extend AX into EAX
+   CLD,             // Clear Direction Flag
    CMOVA4RegMem,    // Conditional dword move if above (unsigned greater than) (CF=0 and ZF=0)
    CMOVB4RegMem,    // Conditional dword move if below (unsigned less than) (CF=1)
    CMOVE4RegMem,    // Conditional dword move if equal (ZF=1)
@@ -513,10 +514,11 @@ typedef enum {
    MOV2RegReg,      // Move word Register, Register
    MOV4RegReg,      // Move dword Register, Register
    MOV8RegReg,      // Move qword Register, Register (AMD64)
+   CMOVB4RegReg,    // Conditional below than move dword Register, Register
    CMOVG4RegReg,    // Conditional greater than move dword Register, Register
    CMOVG8RegReg,    // Conditional greater than move qword Register, Register (AMD64)
-   CMOVL4RegReg,    // Conditional greater than move dword Register, Register
-   CMOVL8RegReg,    // Conditional greater than move qword Register, Register (AMD64)
+   CMOVL4RegReg,    // Conditional less than move dword Register, Register
+   CMOVL8RegReg,    // Conditional less than move qword Register, Register (AMD64)
    CMOVE4RegReg,    // Conditional equal (zero) move dword Register, Register
    CMOVE8RegReg,    // Conditional equal (zero) move dword Register, Register (AMD64)
    CMOVNE4RegReg,   // Conditional not-equal (non-zero) move dword Register, Register
@@ -528,6 +530,8 @@ typedef enum {
    MOV8RegImm64,    // Move Immediate qword to qword Register (AMD64)
    MOVLPDRegMem,    // Load quadword into low order 64 bits of XMM reg (no zero extension to 128 bits)
    MOVLPDMemReg,    // Store low order 64 bits of XMM reg to quadword
+   MOVDRegMem,      // Load double XMM register from memory
+   MOVDMemReg,      // Store double XMM register to memory
    MOVQRegMem,      // Load quad XMM register from memory
    MOVQMemReg,      // Store quad XMM register to memory
    MOVSB,           // Move String Byte from [ESI] to [EDI]
@@ -763,6 +767,7 @@ typedef enum {
    SHRD4RegRegCL,   // Shift Right Double Precision Register, Register by CL count
    SHRD4MemRegImm1, // Shift Right Double Precision Memory, Register by Immediate count
    SHRD4MemRegCL,   // Shift Right Double Precision Memory, Register by CL count
+   STD,             // Set Direction Flag
    STOSB,           // Store AL in byte at [EDI]
    STOSW,           // Store AX in word at [EDI]
    STOSD,           // Store EAX in dword at [EDI]

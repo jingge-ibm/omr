@@ -1226,6 +1226,8 @@ const uint32_t TR_X86OpCode::_properties[IA32NumOpCodes] =
    IA32OpProp_IntTarget                      |
    IA32OpProp_UsesTarget,
 
+   0,                                          // CLD
+
    IA32OpProp_ModifiesTarget                 | // CMOVA4RegMem
    IA32OpProp_IntSource                      |
    IA32OpProp_TestsZeroFlag                  |
@@ -3243,6 +3245,12 @@ const uint32_t TR_X86OpCode::_properties[IA32NumOpCodes] =
    IA32OpProp_ModifiesTarget                 | // MOV8RegReg (AMD64)
    IA32OpProp_SourceRegisterInModRM,
 
+   IA32OpProp_ModifiesTarget                 | // CMOVB4RegReg
+   IA32OpProp_SourceRegisterInModRM          |
+   IA32OpProp_IntSource                      |
+   IA32OpProp_IntTarget                      |
+   IA32OpProp_TestsCarryFlag,
+
    IA32OpProp_ModifiesTarget                 | // CMOVG4RegReg
    IA32OpProp_SourceRegisterInModRM          |
    IA32OpProp_IntSource                      |
@@ -3319,6 +3327,12 @@ const uint32_t TR_X86OpCode::_properties[IA32NumOpCodes] =
    IA32OpProp_ModifiesTarget                 | // MOVLPDMemReg
    IA32OpProp_Needs16BitOperandPrefix        |
    IA32OpProp_DoubleFP,
+
+   IA32OpProp_ModifiesTarget                 | // MOVDRegMem
+   IA32OpProp_Needs16BitOperandPrefix,
+
+   IA32OpProp_ModifiesTarget                 | // MOVDMemReg
+   IA32OpProp_Needs16BitOperandPrefix,
 
    IA32OpProp_ModifiesTarget                 | // MOVQRegMem
    IA32OpProp_SingleFP,
@@ -5206,6 +5220,8 @@ const uint32_t TR_X86OpCode::_properties[IA32NumOpCodes] =
    IA32OpProp_ModifiesCarryFlag              |
    IA32OpProp_UsesTarget,
 
+   0,                                          // STD
+
    0,                                          // STOSB
 
    IA32OpProp_Needs16BitOperandPrefix,         // STOSW
@@ -6729,6 +6745,7 @@ const uint32_t TR_X86OpCode::_properties2[IA32NumOpCodes] =
 
    0,                                          // CBWAcc
    0,                                          // CBWEAcc
+   0,                                          // CLD
    IA32OpProp2_SourceIsMemRef,                 // CMOVA4RegMem
    IA32OpProp2_SourceIsMemRef,                 // CMOVB4RegMem
    IA32OpProp2_SourceIsMemRef,                 // CMOVE4RegMem
@@ -7640,6 +7657,8 @@ const uint32_t TR_X86OpCode::_properties2[IA32NumOpCodes] =
    IA32OpProp2_LongTarget                    |
    IA32OpProp2_Needs64BitOperandPrefix,
 
+   0,                                          // CMOVB4RegReg
+
    0,                                          // CMOVG4RegReg
 
    IA32OpProp2_LongSource                    | // CMOVG8RegReg (AMD64)
@@ -7674,6 +7693,11 @@ const uint32_t TR_X86OpCode::_properties2[IA32NumOpCodes] =
    IA32OpProp2_XMMTarget,
 
    IA32OpProp2_XMMSource,                      // MOVLPDMemReg
+
+   IA32OpProp2_SourceIsMemRef                | // MOVDRegMem
+   IA32OpProp2_XMMTarget,
+
+   IA32OpProp2_XMMSource,                      // MOVDMemReg
 
    IA32OpProp2_SourceIsMemRef                | // MOVQRegMem
    IA32OpProp2_NeedsScalarPrefix             |
@@ -8320,6 +8344,7 @@ const uint32_t TR_X86OpCode::_properties2[IA32NumOpCodes] =
    0,                                          // SHRD4RegRegCL
    0,                                          // SHRD4MemRegImm1
    0,                                          // SHRD4MemRegCL
+   0,                                          // STD
 
    0,                                          // STOSB
    0,                                          // STOSW

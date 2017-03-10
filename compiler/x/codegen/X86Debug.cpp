@@ -2853,6 +2853,7 @@ static const char * opCodeToNameMap[IA32NumOpCodes] =
    "CALLREXMem", // (AMD64)
    "CBWAcc",
    "CBWEAcc",
+   "CLD",
    "CMOVA4RegMem",
    "CMOVB4RegMem",
    "CMOVE4RegMem",
@@ -3216,6 +3217,7 @@ static const char * opCodeToNameMap[IA32NumOpCodes] =
    "MOV2RegReg",
    "MOV4RegReg",
    "MOV8RegReg", // (AMD64)
+   "CMOVB4RegReg",
    "CMOVG4RegReg",
    "CMOVG8RegReg", // (AMD64)
    "CMOVL4RegReg",
@@ -3231,6 +3233,8 @@ static const char * opCodeToNameMap[IA32NumOpCodes] =
    "MOV8RegImm64", // (AMD64)
    "MOVLPDRegMem",
    "MOVLPDMemReg",
+   "MOVDRegMem",
+   "MOVDMemReg",
    "MOVQRegMem",
    "MOVQMemReg",
    "MOVSB",
@@ -3466,6 +3470,7 @@ static const char * opCodeToNameMap[IA32NumOpCodes] =
    "SHRD4RegRegCL",
    "SHRD4MemRegImm1",
    "SHRD4MemRegCL",
+   "STD",
    "STOSB",
    "STOSW",
    "STOSD",
@@ -3741,6 +3746,7 @@ static const char * opCodeToMnemonicMap[IA32NumOpCodes] =
    "call",           // CALLREXMem (AMD64)
    "cbw",            // CBWAcc
    "cbwe",           // CBWEAcc
+   "cld",            // CLD
    "cmova",          // CMOVA4RegMem
    "cmovb",          // CMOVB4RegMem
    "cmove",          // CMOVE4RegMem
@@ -4104,10 +4110,11 @@ static const char * opCodeToMnemonicMap[IA32NumOpCodes] =
    "mov",            // MOV2RegReg
    "mov",            // MOV4RegReg
    "mov",            // MOV8RegReg (AMD64)
+   "cmovb",          // CMOVB4RegReg
    "cmovg",          // CMOVG4RegReg
    "cmovg",          // CMOVG8RegReg (AMD64)
-   "cmovl",          // CMOVG4RegReg
-   "cmovl",          // CMOVG8RegReg (AMD64)
+   "cmovl",          // CMOVL4RegReg
+   "cmovl",          // CMOVL8RegReg (AMD64)
    "cmove",          // CMOVE4RegReg
    "cmove",          // CMOVE8RegReg (AMD64)
    "cmovne",         // CMOVNE4RegReg
@@ -4119,6 +4126,8 @@ static const char * opCodeToMnemonicMap[IA32NumOpCodes] =
    "mov",            // MOV8RegImm64 (AMD64)
    "movlpd",         // MOVLPDRegMem
    "movlpd",         // MOVLPDMemReg
+   "movd",           // MOVDRegMem
+   "movd",           // MOVDMemReg
    "movq",           // MOVQRegMem
    "movq",           // MOVQMemReg
    "movsb",          // MOVSB
@@ -4354,6 +4363,7 @@ static const char * opCodeToMnemonicMap[IA32NumOpCodes] =
    "shrd",           // SHRD4RegRegCL
    "shrd",           // SHRD4MemRegImm1
    "shrd",           // SHRD4MemRegCL
+   "std",            // STD
    "stosb",          // STOSB
    "stosw",          // STOSW
    "stosd",          // STOSD
