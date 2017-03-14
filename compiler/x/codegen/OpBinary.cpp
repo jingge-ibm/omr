@@ -521,6 +521,7 @@ const TR_X86OpCode::TR_OpCodeBinaryEntry TR_X86OpCode::_binaryEncodings[IA32NumO
       {0x8b, 0xc0, 0x00, 2},    // MOV4RegReg
       {0x8b, 0xc0, 0x00, 2},    // MOV8RegReg (AMD64)
       {0x0f, 0x42, 0xc0, 3},    // CMOVB4RegReg
+      {0x0f, 0x42, 0xc0, 3},    // CMOVB8RegReg
       {0x0f, 0x4f, 0xc0, 3},    // CMOVG4RegReg
       {0x0f, 0x4f, 0xc0, 3},    // CMOVG8RegReg (AMD64)
       {0x0f, 0x4c, 0xc0, 3},    // CMOVL4RegReg

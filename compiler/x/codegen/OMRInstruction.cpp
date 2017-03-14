@@ -463,6 +463,7 @@ extern TR_X86OpCodes ADCRegReg()      { return ADCRegReg      ( TR::Compiler->ta
 extern TR_X86OpCodes ANDRegImm4()     { return ANDRegImm4     ( TR::Compiler->target.is64Bit() ? true : false ); }
 extern TR_X86OpCodes ANDRegImms()     { return ANDRegImms     ( TR::Compiler->target.is64Bit() ? true : false ); }
 extern TR_X86OpCodes ANDRegReg()      { return ANDRegReg      ( TR::Compiler->target.is64Bit() ? true : false ); }
+extern TR_X86OpCodes CMOVBRegReg()    { return CMOVBRegReg    ( TR::Compiler->target.is64Bit() ? true : false ); }
 extern TR_X86OpCodes CMOVERegMem()    { return CMOVERegMem    ( TR::Compiler->target.is64Bit() ? true : false ); }
 extern TR_X86OpCodes CMOVERegReg()    { return CMOVERegReg    ( TR::Compiler->target.is64Bit() ? true : false ); }
 extern TR_X86OpCodes CMOVNERegMem()   { return CMOVNERegMem   ( TR::Compiler->target.is64Bit() ? true : false ); }

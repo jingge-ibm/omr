@@ -515,6 +515,7 @@ typedef enum {
    MOV4RegReg,      // Move dword Register, Register
    MOV8RegReg,      // Move qword Register, Register (AMD64)
    CMOVB4RegReg,    // Conditional below than move dword Register, Register
+   CMOVB8RegReg,    // Conditional below than move qword Register, Register
    CMOVG4RegReg,    // Conditional greater than move dword Register, Register
    CMOVG8RegReg,    // Conditional greater than move qword Register, Register (AMD64)
    CMOVL4RegReg,    // Conditional less than move dword Register, Register
@@ -930,6 +931,7 @@ const uint8_t SSE42OpcodePrefix[] = { 0x66, 0x0f };
 inline TR_X86OpCodes BSFRegReg      (bool is64Bit){ return is64Bit? BSF8RegReg      : BSF4RegReg      ; }
 inline TR_X86OpCodes BSWAPReg       (bool is64Bit){ return is64Bit? BSWAP8Reg       : BSWAP4Reg       ; }
 inline TR_X86OpCodes BSRRegReg      (bool is64Bit){ return is64Bit? BSR8RegReg      : BSR4RegReg      ; }
+inline TR_X86OpCodes CMOVBRegReg    (bool is64Bit){ return is64Bit? CMOVB8RegReg    : CMOVB4RegReg    ; }
 inline TR_X86OpCodes CMOVERegMem    (bool is64Bit){ return is64Bit? CMOVE8RegMem    : CMOVE4RegMem    ; }
 inline TR_X86OpCodes CMOVERegReg    (bool is64Bit){ return is64Bit? CMOVE8RegReg    : CMOVE4RegReg    ; }
 inline TR_X86OpCodes CMOVNERegMem   (bool is64Bit){ return is64Bit? CMOVNE8RegMem   : CMOVNE4RegMem   ; }
@@ -1068,6 +1070,7 @@ extern TR_X86OpCodes ADCRegReg();
 extern TR_X86OpCodes ANDRegImm4();
 extern TR_X86OpCodes ANDRegImms();
 extern TR_X86OpCodes ANDRegReg();
+extern TR_X86OpCodes CMOVBRegReg();
 extern TR_X86OpCodes CMOVERegMem();
 extern TR_X86OpCodes CMOVERegReg();
 extern TR_X86OpCodes CMOVNERegMem();

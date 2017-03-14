@@ -3218,6 +3218,7 @@ static const char * opCodeToNameMap[IA32NumOpCodes] =
    "MOV4RegReg",
    "MOV8RegReg", // (AMD64)
    "CMOVB4RegReg",
+   "CMOVB8RegReg",
    "CMOVG4RegReg",
    "CMOVG8RegReg", // (AMD64)
    "CMOVL4RegReg",
@@ -4111,6 +4112,7 @@ static const char * opCodeToMnemonicMap[IA32NumOpCodes] =
    "mov",            // MOV4RegReg
    "mov",            // MOV8RegReg (AMD64)
    "cmovb",          // CMOVB4RegReg
+   "cmovb",          // CMOVB8RegReg
    "cmovg",          // CMOVG4RegReg
    "cmovg",          // CMOVG8RegReg (AMD64)
    "cmovl",          // CMOVL4RegReg

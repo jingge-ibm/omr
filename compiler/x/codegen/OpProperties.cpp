@@ -3251,6 +3251,12 @@ const uint32_t TR_X86OpCode::_properties[IA32NumOpCodes] =
    IA32OpProp_IntTarget                      |
    IA32OpProp_TestsCarryFlag,
 
+   IA32OpProp_ModifiesTarget                 | // CMOVB8RegReg
+   IA32OpProp_SourceRegisterInModRM          |
+   IA32OpProp_IntSource                      |
+   IA32OpProp_IntTarget                      |
+   IA32OpProp_TestsCarryFlag,
+
    IA32OpProp_ModifiesTarget                 | // CMOVG4RegReg
    IA32OpProp_SourceRegisterInModRM          |
    IA32OpProp_IntSource                      |
@@ -7659,6 +7665,8 @@ const uint32_t TR_X86OpCode::_properties2[IA32NumOpCodes] =
 
    0,                                          // CMOVB4RegReg
 
+   IA32OpProp2_Needs64BitOperandPrefix,        // CMOVB8RegReg
+
    0,                                          // CMOVG4RegReg
 
    IA32OpProp2_LongSource                    | // CMOVG8RegReg (AMD64)
@@ -8349,7 +8357,6 @@ const uint32_t TR_X86OpCode::_properties2[IA32NumOpCodes] =
    0,                                          // STOSB
    0,                                          // STOSW
    0,                                          // STOSD
-
    IA32OpProp2_Needs64BitOperandPrefix,        // STOSQ (AMD64)
 
    IA32OpProp2_SetsCCForTest                 | // SUB1AccImm1
