@@ -35,6 +35,7 @@ endm
 ; - otherwise, returns the content of the MXCSR.
 	align	16
 jitGetMXCSR	proc near
+	vpermq  ymm1, ymm1, 0
 	sub	esp, 4
 	stmxcsr
 	pop	eax

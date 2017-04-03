@@ -37,6 +37,7 @@ endif
 ; - otherwise, returns the content of the MXCSR.
 	align	16
 jitGetMXCSR	proc
+	vpermq  ymm1,ymm1,0
 	sub	rsp, 8
 	stmxcsr [rsp]
 	pop	rax
